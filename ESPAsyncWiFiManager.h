@@ -47,7 +47,7 @@ extern "C" {
 #include <rom/rtc.h>
 #endif
 
-const char WFM_HTTP_HEAD[] PROGMEM            = "<!DOCTYPE html><html lang=\"en\"><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1, user-scalable=no\"/><title>{v}</title>";
+const char WFM_HTTP_HEAD[] PROGMEM        = "<!DOCTYPE html><html lang=\"en\"><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1, user-scalable=no\"/><title>{v}</title>";
 const char HTTP_STYLE[] PROGMEM           = "<style>.c{text-align: center;} div,input{padding:5px;font-size:1em;} input{width:95%;} body{text-align: center;font-family:verdana;} button{border:0;border-radius:0.3rem;background-color:#1fa3ec;color:#fff;line-height:2.4rem;font-size:1.2rem;width:100%;} .q{float: right;width: 64px;text-align: right;} .l{background: url(\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAALVBMVEX///8EBwfBwsLw8PAzNjaCg4NTVVUjJiZDRUUUFxdiZGSho6OSk5Pg4eFydHTCjaf3AAAAZElEQVQ4je2NSw7AIAhEBamKn97/uMXEGBvozkWb9C2Zx4xzWykBhFAeYp9gkLyZE0zIMno9n4g19hmdY39scwqVkOXaxph0ZCXQcqxSpgQpONa59wkRDOL93eAXvimwlbPbwwVAegLS1HGfZAAAAABJRU5ErkJggg==\") no-repeat left center;background-size: 1em;}</style>";
 const char HTTP_SCRIPT[] PROGMEM          = "<script>function c(l){document.getElementById('s').value=l.innerText||l.textContent;document.getElementById('p').focus();}</script>";
 const char HTTP_HEAD_END[] PROGMEM        = "</head><body><div style='text-align:left;display:inline-block;min-width:260px;'>";
@@ -115,9 +115,10 @@ public:
 
   void          scan(boolean async = false);
   String        scanModal();
+  void			loopNoScan();
   void          loop();
   void          safeLoop();
-  void          criticalLoop();
+  void          criticalLoop(boolean doScan = true);
   String        infoAsString();
 
   boolean       autoConnect(unsigned long maxConnectRetries = 1, unsigned long retryDelayMs = 1000);
@@ -145,6 +146,7 @@ public:
   //configuration portal (ESP as access point) is running [default true/on]
   void          setTryConnectDuringConfigPortal(boolean v);
 
+  void          setCloseAPOnConnect(boolean flag);
 
   void          setDebugOutput(boolean debug);
   //defaults to not showing anything under 8% signal quality if called
@@ -180,6 +182,7 @@ private:
 
 
   boolean         _modeless;
+  boolean         closeAPOnConnect;
   unsigned long   scannow;
   int             shouldscan;
   boolean         needInfo = true;

@@ -69,6 +69,7 @@ AsyncWiFiManager::AsyncWiFiManager(AsyncWebServer *server, DNSServer *dns) :serv
   wifiSSIDs = NULL;
   wifiSSIDscan=true;
   _modeless=false;
+  closeAPOnConnect = false;
   shouldscan=true;
 }
 
@@ -97,30 +98,35 @@ void AsyncWiFiManager::setupConfigPortal() {
     }
     DEBUG_WM(_apPassword);
   }
+#if defined(ESP8266)
+  if (WiFi.getMode() & WIFI_AP) {
+#else
+  if (WiFi.getMode() & WIFI_MODE_AP) {
+#endif
+	  //optional soft ip config
+	  if (_ap_static_ip) {
+		DEBUG_WM(F("Custom AP IP/GW/Subnet"));
+		WiFi.softAPConfig(_ap_static_ip, _ap_static_gw, _ap_static_sn);
+	  }
 
-  //optional soft ip config
-  if (_ap_static_ip) {
-    DEBUG_WM(F("Custom AP IP/GW/Subnet"));
-    WiFi.softAPConfig(_ap_static_ip, _ap_static_gw, _ap_static_sn);
+	  if (_apPassword != NULL) {
+		WiFi.softAP(_apName, _apPassword);//password option
+	  } else {
+		WiFi.softAP(_apName);
+	  }
+
+	  delay(500); // Without delay I've seen the IP address blank
+	  DEBUG_WM(F("AP IP address: "));
+	  DEBUG_WM(WiFi.softAPIP());
+
+	  /* Setup the DNS server redirecting all the domains to the apIP */
+	  #ifdef USE_EADNS
+	  dnsServer->setErrorReplyCode(AsyncDNSReplyCode::NoError);
+	  #else
+	  dnsServer->setErrorReplyCode(DNSReplyCode::NoError);
+	  #endif
+	  dnsServer->start(DNS_PORT, "*", WiFi.softAPIP());
   }
-
-  if (_apPassword != NULL) {
-    WiFi.softAP(_apName, _apPassword);//password option
-  } else {
-    WiFi.softAP(_apName);
-  }
-
-  delay(500); // Without delay I've seen the IP address blank
-  DEBUG_WM(F("AP IP address: "));
-  DEBUG_WM(WiFi.softAPIP());
-
-  /* Setup the DNS server redirecting all the domains to the apIP */
-  #ifdef USE_EADNS
-  dnsServer->setErrorReplyCode(AsyncDNSReplyCode::NoError);
-  #else
-  dnsServer->setErrorReplyCode(DNSReplyCode::NoError);
-  #endif
-  dnsServer->start(DNS_PORT, "*", WiFi.softAPIP());
 
   setInfo();
 
@@ -223,7 +229,6 @@ boolean AsyncWiFiManager::autoConnect(char const *apName, char const *apPassword
 
 	  }
   }
-
 
   return startConfigPortal(apName, apPassword);
 }
@@ -346,17 +351,12 @@ void AsyncWiFiManager::copySSIDInfo(wifi_ssid_count_t n) {
 }
 
 void AsyncWiFiManager::startConfigPortalModeless(char const *apName, char const *apPassword) {
-
   _modeless =true;
   _apName = apName;
   _apPassword = apPassword;
 
-  /*
-  AJS - do we want this?
-
-  */
-
   //setup AP
+  DEBUG_WM("SETTING AP STA");
   WiFi.mode(WIFI_AP_STA);
   DEBUG_WM("SET AP STA");
 
@@ -364,7 +364,9 @@ void AsyncWiFiManager::startConfigPortalModeless(char const *apName, char const 
   if (connectWifi("", "") == WL_CONNECTED)   {
     DEBUG_WM(F("IP Address:"));
     DEBUG_WM(WiFi.localIP());
-    //connected
+	if (closeAPOnConnect) {
+		WiFi.enableAP(false);
+	}
     // call the callback!
 	if ( _savecallback != NULL) {
 	  //todo: check if any custom parameters actually exist, and check if they really changed maybe
@@ -377,9 +379,17 @@ void AsyncWiFiManager::startConfigPortalModeless(char const *apName, char const 
     _apcallback(this);
   }
 
+  // Kick off one scan
+  scan(true);
+
   connect = false;
   setupConfigPortal();
   scannow= 0 ;
+}
+
+void AsyncWiFiManager::loopNoScan(){
+	safeLoop();
+	criticalLoop(false);
 }
 
 void AsyncWiFiManager::loop(){
@@ -398,19 +408,21 @@ void AsyncWiFiManager::setInfo() {
 /**
  * Anything that accesses WiFi, ESP or EEPROM goes here
  */
-void AsyncWiFiManager::criticalLoop(){
+void AsyncWiFiManager::criticalLoop(boolean doScan){
   if (_modeless)
   {
-	if (scannow==0 || millis() - scannow >= 60000)
-	{
-      scannow= millis() ;
-	  scan(true);
+	if (doScan || !WiFi.isConnected()) {
+		if (scannow==0 || millis() - scannow >= 60000)
+		{
+		  scannow= millis() ;
+		  scan(true);
+		}
 	}
 
 	wifi_ssid_count_t n = WiFi.scanComplete();
 	if(n >= 0)
 	{
-      copySSIDInfo(n);
+	  copySSIDInfo(n);
 	  WiFi.scanDelete();
 	}
 
@@ -424,8 +436,9 @@ void AsyncWiFiManager::criticalLoop(){
 		DEBUG_WM(F("Failed to connect."));
 	  } else {
 		//connected
-		// alanswx - should we have a config to decide if we should shut down AP?
-		// WiFi.mode(WIFI_STA);
+		if (closeAPOnConnect) {
+			WiFi.enableAP(false);
+		}
 		//notify that configuration has changed and any optional parameters should be saved
 		if ( _savecallback != NULL) {
 		  //todo: check if any custom parameters actually exist, and check if they really changed maybe
@@ -452,7 +465,13 @@ void AsyncWiFiManager::criticalLoop(){
  */
 void AsyncWiFiManager::safeLoop(){
   #ifndef USE_EADNS
-  dnsServer->processNextRequest();
+#if defined(ESP8266)
+  if (WiFi.getMode() & WIFI_AP) {
+#else
+  if (WiFi.getMode() & WIFI_MODE_AP) {
+#endif
+		dnsServer->processNextRequest();
+	}
   #endif
 }
 
@@ -706,6 +725,10 @@ void AsyncWiFiManager::setConnectTimeout(unsigned long seconds) {
 
 void AsyncWiFiManager::setTryConnectDuringConfigPortal(boolean v) {
   _tryConnectDuringConfigPortal = v;
+}
+
+void AsyncWiFiManager::setCloseAPOnConnect(boolean flag) {
+  closeAPOnConnect = flag;
 }
 
 void AsyncWiFiManager::setDebugOutput(boolean debug) {
